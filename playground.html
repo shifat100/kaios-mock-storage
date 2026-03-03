@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KaiOS Universal Storage Dashboard</title>
+    <style>
+        :root {
+            --bg-dark: #1e1e2e;
+            --bg-panel: #252537;
+            --primary: #8e44ad;
+            --accent: #00d2d3;
+            --text-main: #ecf0f1;
+            --text-muted: #95a5a6;
+            --border: #34344a;
+            --console-bg: #101015;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Menlo, monospace;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- HEADER --- */
+        header {
+            background: var(--bg-panel);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .brand { display: flex; align-items: center; gap: 10px; font-weight: bold; font-size: 1.1rem; }
+        .brand svg { fill: var(--accent); width: 24px; height: 24px; }
+        
+        .top-controls { display: flex; gap: 10px; }
+        select { background: var(--bg-dark); color: white; border: 1px solid var(--border); padding: 5px 10px; border-radius: 4px; outline: none; }
+        
+        button {
+            background: var(--primary); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem; transition: 0.2s;
+        }
+        button:hover { filter: brightness(1.2); }
+        button.btn-danger { background: var(--danger); }
+        button.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+        button.btn-outline:hover { background: var(--border); color: white; }
+
+        /* --- MAIN LAYOUT --- */
+        .main-container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            grid-template-rows: 1fr 250px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        /* --- SIDEBAR (FILE EXPLORER) --- */
+        .sidebar {
+            grid-row: 1 / -1;
+            background: #191925;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-header { padding: 10px; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+        .file-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex-grow: 1; }
+        .file-item {
+            padding: 8px 15px; display: flex; align-items: center; gap: 10px; cursor: pointer; border-bottom: 1px solid #2a2a35; transition: 0.2s;
+        }
+        .file-item:hover { background: var(--bg-panel); }
+        .file-item svg { width: 16px; height: 16px; fill: var(--text-muted); }
+        .file-info { display: flex; flex-direction: column; width: 100%; }
+        .file-name { font-size: 0.9rem; color: var(--text-main); }
+        .file-meta { font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+
+        /* --- EDITOR AREA --- */
+        .editor-area {
+            grid-column: 2;
+            padding: 20px;
+            overflow-y: auto;
+            background: var(--bg-dark);
+        }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 0.85rem; }
+        .input-group input, .input-group textarea {
+            width: 100%; background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-main); padding: 10px; border-radius: 4px; box-sizing: border-box; font-family: monospace;
+        }
+        .input-group textarea { resize: vertical; min-height: 100px; }
+
+        /* --- COMMAND RUNNER & CONSOLE --- */
+        .bottom-panel {
+            grid-column: 2;
+            background: var(--console-bg);
+            border-top: 1px solid var(--border);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+        
+        /* Command Runner */
+        .cmd-runner { border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+        .panel-header { background: #2a2a35; padding: 5px 10px; font-size: 0.8rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; }
+        .cmd-input { flex-grow: 1; background: transparent; border: none; color: #a9b7c6; padding: 10px; font-family: monospace; resize: none; outline: none; }
+        
+        /* Console Logs */
+        .console-logs { overflow-y: auto; padding: 10px; font-family: monospace; font-size: 0.85rem; }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #222; padding-bottom: 2px; }
+        .log-time { color: #555; margin-right: 8px; }
+        .log-info { color: #00d2d3; }
+        .log-success { color: #2ecc71; }
+        .log-error { color: #e74c3c; }
+        .log-warn { color: #f1c40f; }
+
+        /* Icons */
+        .icon { width: 16px; height: 16px; fill: currentColor; }
+    </style>
+</head>
+<body>
+
+    <!-- IMPORT POLYFILL -->
+    <script src="kaios-storage-polyfill.js"></script>
+
+    <!-- HEADER -->
+    <header>
+        <div class="brand">
+            <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+            <span>KaiOS Storage Studio</span>
+        </div>
+        <div class="top-controls">
+            <select id="apiMode">
+                <option value="2.5">API: KaiOS 2.5 (DOMRequest)</option>
+                <option value="3.0">API: KaiOS 3.0 (Async/Promise)</option>
+            </select>
+            <select id="storageMode" onchange="refreshFileList()">
+                <option value="internal">Drive: Internal (/sdcard/)</option>
+                <option value="external">Drive: External (/sdcard1/)</option>
+            </select>
+            <button class="btn-outline" onclick="window.location.href = window.location.href.split('?')[0] + '?mode=explorer'">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
+                UI Mode
+            </button>
+            <button class="btn-danger" onclick="window.location.href = window.location.href.split('?')[0]">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 00-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 002 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+                Exit
+            </button>
+        </div>
+    </header>
+
+    <div class="main-container">
+        
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span>File Explorer</span>
+                <span style="cursor: pointer" onclick="refreshFileList()" title="Refresh">↻</span>
+            </div>
+            <ul class="file-list" id="fileList">
+                <!-- JS will populate this -->
+                <li style="padding:15px; color:#666; text-align:center;">Loading...</li>
+            </ul>
+            <div style="padding: 10px; border-top: 1px solid var(--border);">
+                <small style="color:var(--text-muted); display:block;">Space Usage:</small>
+                <div style="background:#333; height:6px; border-radius:3px; margin-top:5px; overflow:hidden;">
+                    <div id="spaceBar" style="background:var(--accent); width:0%; height:100%;"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN EDITOR -->
+        <main class="editor-area">
+            <h2 style="margin-top:0; border-bottom:1px solid var(--border); padding-bottom:10px;">File Editor</h2>
+            
+            <div class="input-group">
+                <label>Filename</label>
+                <input type="text" id="fileName" value="demo_script.js">
+            </div>
+
+            <div class="input-group">
+                <label>Content</label>
+                <textarea id="fileContent">console.log("Hello from virtual storage!");</textarea>
+            </div>
+
+            <div style="display:flex; gap: 10px;">
+                <button onclick="actions.save()">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                    Save File
+                </button>
+                <button class="btn-outline" onclick="actions.read()">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                    Read
+                </button>
+                <button class="btn-danger" onclick="actions.delete()">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                    Delete
+                </button>
+            </div>
+        </main>
+
+        <!-- BOTTOM PANEL -->
+        <div class="bottom-panel">
+            
+            <!-- JS RUNNER -->
+            <div class="cmd-runner">
+                <div class="panel-header">
+                    <span>JS Command Runner</span>
+                    <button class="btn-outline" style="padding: 2px 8px; font-size: 0.7rem;" onclick="runCommand()">▶ Run</button>
+                </div>
+                <textarea class="cmd-input" id="cmdInput" spellcheck="false" placeholder="// Write JS here to test API directly.
+// context: 'storage' variable is available.
+// Example: storage.addNamed(new Blob(['hi']), 'test.txt')">
+// Example: Check Free Space
+storage.freeSpace().onsuccess = function() {
+  log("Free Space: " + this.result + " bytes", "success");
+}</textarea>
+            </div>
+
+            <!-- CONSOLE LOGS -->
+            <div class="console-logs" id="consoleOutput">
+                <div class="log-entry"><span class="log-time">[System]</span> Welcome to KaiOS Storage Studio v1.3</div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- LOGIC -->
+    <script>
+        // --- LOGGER ---
+        const consoleEl = document.getElementById('consoleOutput');
+        function log(msg, type = 'info') {
+            const time = new Date().toLocaleTimeString([], { hour12: false });
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-${type}">${msg}</span>`;
+            consoleEl.appendChild(div);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        // --- CORE HELPERS ---
+        function getContext() {
+            const api = document.getElementById('apiMode').value;
+            const drive = document.getElementById('storageMode').value; // internal, external
+            
+            // Get correct storage object
+            let storage;
+            if (api === '2.5') {
+                const storages = navigator.getDeviceStorages('sdcard');
+                storage = (drive === 'internal') ? storages[0] : storages[1];
+            } else {
+                const storages = navigator.b2g.getDeviceStorages('sdcard');
+                storage = (drive === 'internal') ? storages[0] : storages[1];
+            }
+            return { storage, api, drive };
+        }
+
+        // --- ACTIONS ---
+        const actions = {
+            save: function() {
+                const { storage, api } = getContext();
+                const name = document.getElementById('fileName').value;
+                const content = document.getElementById('fileContent').value;
+                const blob = new Blob([content], { type: 'text/plain' });
+
+                log(`Saving '${name}' via KaiOS ${api}...`);
+
+                if (api === '2.5') {
+                    const req = storage.addNamed(blob, name);
+                    req.onsuccess = () => { log(`File saved successfully: ${req.result}`, 'success'); refreshFileList(); };
+                    req.onerror = () => log(`Save Failed: ${req.error.name}`, 'error');
+                } else {
+                    storage.addNamed(blob, name)
+                        .then(res => { log(`Async Save Success: ${res}`, 'success'); refreshFileList(); })
+                        .catch(err => log(`Async Save Error: ${err}`, 'error'));
+                }
+            },
+            
+            read: function() {
+                const { storage, api } = getContext();
+                const name = document.getElementById('fileName').value;
+
+                const handleFile = (file) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        document.getElementById('fileContent').value = e.target.result;
+                        log(`Read content of '${file.name}' (${file.size} bytes)`, 'success');
+                    };
+                    reader.readAsText(file);
+                };
+
+                if (api === '2.5') {
+                    const req = storage.get(name);
+                    req.onsuccess = () => handleFile(req.result);
+                    req.onerror = () => log("File not found or read error", 'error');
+                } else {
+                    storage.get(name)
+                        .then(file => handleFile(file))
+                        .catch(err => log("File not found (Async)", 'error'));
+                }
+            },
+
+            delete: function() {
+                const { storage, api } = getContext();
+                const name = document.getElementById('fileName').value;
+                
+                if(!confirm(`Delete ${name}?`)) return;
+
+                if (api === '2.5') {
+                    const req = storage.delete(name);
+                    req.onsuccess = () => { log(`Deleted '${name}'`, 'warn'); refreshFileList(); };
+                    req.onerror = () => log(`Delete failed`, 'error');
+                } else {
+                    storage.delete(name)
+                        .then(() => { log(`Deleted '${name}' (Async)`, 'warn'); refreshFileList(); })
+                        .catch(err => log(`Delete failed: ${err}`, 'error'));
+                }
+            }
+        };
+
+        // --- FILE LIST & EXPLORER ---
+        async function refreshFileList() {
+            const { storage, api } = getContext();
+            const listEl = document.getElementById('fileList');
+            listEl.innerHTML = ''; // Clear
+
+            // Update Space Bar Mockup
+            const spaceBar = document.getElementById('spaceBar');
+            spaceBar.style.width = Math.floor(Math.random() * 40 + 10) + '%'; // Simulation
+
+            const addFileUI = (file) => {
+                const li = document.createElement('li');
+                li.className = 'file-item';
+                // SVG Icon based on extension logic could go here
+                li.innerHTML = `
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                    <div class="file-info">
+                        <span class="file-name">${file.name}</span>
+                        <span class="file-meta">${(file.size/1024).toFixed(1)} KB | ${new Date(file.lastModified).toLocaleDateString()}</span>
+                    </div>
+                `;
+                li.onclick = () => {
+                    document.getElementById('fileName').value = file.name;
+                    actions.read();
+                };
+                listEl.appendChild(li);
+            };
+
+            if (api === '2.5') {
+                const cursor = storage.enumerate();
+                cursor.onsuccess = function() {
+                    if(this.result && this.result.name !== null) {
+                        addFileUI(this.result);
+                        this.continue();
+                    }
+                }
+            } else {
+                // 3.0 Iterator
+                const iterable = storage.enumerate();
+                const iterator = iterable.values();
+                let res = await iterator.next();
+                while(!res.done) {
+                    if(res.value && res.value.name) addFileUI(res.value);
+                    res = await iterator.next();
+                }
+            }
+        }
+
+        // --- COMMAND RUNNER ---
+        function runCommand() {
+            const input = document.getElementById('cmdInput').value;
+            const { storage } = getContext();
+            
+            log("Executing custom command...", 'info');
+            
+            try {
+                // Create a function with 'storage' and 'log' in scope
+                const func = new Function('storage', 'log', input);
+                func(storage, log);
+            } catch (e) {
+                log(`Syntax Error: ${e.message}`, 'error');
+            }
+        }
+
+        // --- INITIALIZE ---
+        // Listen for storage changes globally
+        const storages = navigator.getDeviceStorages('sdcard');
+        storages.forEach(s => {
+            s.addEventListener('change', (e) => {
+                log(`⚡ EVENT: ${e.reason} at ${e.path}`, 'warn');
+                refreshFileList();
+            });
+        });
+
+        // Start
+        refreshFileList();
+    </script>
+</body>
+</html>
