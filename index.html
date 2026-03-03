@@ -1,1 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KaiOS Storage Simulator</title>
+    <style>
+      :root {
+        --primary-legacy: #d35400;
+        --primary-modern: #2980b9;
+        --bg-color: #ecf0f1;
+        --card-bg: #ffffff;
+      }
 
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: var(--bg-color);
+        color: #333;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+
+      .container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      @media (max-width: 800px) {
+        .container {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .card {
+        background: var(--card-bg);
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+
+      .card h2 {
+        margin-top: 0;
+        border-bottom: 2px solid #ddd;
+        padding-bottom: 10px;
+      }
+
+      .legacy h2 {
+        border-color: var(--primary-legacy);
+        color: var(--primary-legacy);
+      }
+
+      .modern h2 {
+        border-color: var(--primary-modern);
+        color: var(--primary-modern);
+      }
+
+      .input-group {
+        margin-bottom: 15px;
+      }
+
+      .input-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+
+      .input-group input,
+      .input-group textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+
+      button {
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        color: white;
+        font-weight: bold;
+        transition: opacity 0.2s;
+        margin-right: 5px;
+        margin-bottom: 5px;
+      }
+
+      button:hover {
+        opacity: 0.9;
+      }
+
+      .btn-legacy {
+        background-color: var(--primary-legacy);
+      }
+
+      .btn-modern {
+        background-color: var(--primary-modern);
+      }
+
+      .btn-clear {
+        background-color: #7f8c8d;
+      }
+
+      .file-list {
+        margin-top: 15px;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #eee;
+        background: #fafafa;
+        padding: 10px;
+        list-style: none;
+      }
+
+      .file-list li {
+        padding: 5px;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .file-list li span {
+        font-family: monospace;
+      }
+
+      #logConsole {
+        grid-column: 1 / -1;
+        background: #2c3e50;
+        color: #2ecc71;
+        padding: 15px;
+        border-radius: 8px;
+        height: 150px;
+        overflow-y: auto;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
+
+      .explorer-link {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .explorer-link a {
+        background: #27ae60;
+        color: white;
+        padding: 10px 20px;
+        text-decoration: none;
+        border-radius: 20px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1>KaiOS Storage Polyfill Dashboard</h1>
+      <p>Test File System logic for both KaiOS 2.5 and 3.0</p>
+      <div class="explorer-link">
+        <a href="?mode=explorer" target="_blank"
+          >📂 Open Visual File Explorer</a
+        >
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="card legacy">
+        <h2>📱 KaiOS 2.5 (Legacy)</h2>
+        <p>Uses <code>DOMRequest</code> (onsuccess, onerror).</p>
+
+        <div class="input-group">
+          <label>Filename:</label>
+          <input type="text" id="legFilename" value="legacy_note.txt" />
+        </div>
+        <div class="input-group">
+          <label>Content:</label>
+          <textarea id="legContent" rows="2">Content for KaiOS 2.5</textarea>
+        </div>
+
+        <button class="btn-legacy" onclick="legacyCreate()">
+          💾 Create File
+        </button>
+        <button class="btn-legacy" onclick="legacyList()">
+          📜 List All Files
+        </button>
+        <button class="btn-legacy" onclick="legacyRead()">📖 Read File</button>
+
+        <ul id="legacyFileList" class="file-list">
+          <li>No files listed yet...</li>
+        </ul>
+      </div>
+
+      <div class="card modern">
+        <h2>🌐 KaiOS 3.0 (Modern)</h2>
+        <p>
+          Uses <code>Promise</code> / <code>Async Await</code> via
+          <code>b2g</code> namespace.
+        </p>
+
+        <div class="input-group">
+          <label>Filename:</label>
+          <input type="text" id="modFilename" value="modern_doc.json" />
+        </div>
+        <div class="input-group">
+          <label>Content:</label>
+          <textarea id="modContent" rows="2">
+{"type": "async", "ver": 3}</textarea
+          >
+        </div>
+
+        <button class="btn-modern" onclick="modernCreate()">
+          💾 Create (Async)
+        </button>
+        <button class="btn-modern" onclick="modernList()">
+          📜 List (Async)
+        </button>
+        <button class="btn-modern" onclick="modernDelete()">
+          🗑️ Delete File
+        </button>
+
+        <ul id="modernFileList" class="file-list">
+          <li>No files listed yet...</li>
+        </ul>
+      </div>
+
+      <div id="logConsole">System Ready.</div>
+    </div>
+
+    <script src="kaios-storage-polyfill.js"></script>
+
+    <script>
+      function log(msg, type = "info") {
+        const consoleEl = document.getElementById("logConsole");
+        const prefix =
+          type === "err" ? "❌ " : type === "success" ? "✅ " : "ℹ️ ";
+        consoleEl.innerHTML += `\n${prefix} ${msg}`;
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+
+      function legacyCreate() {
+        var name = document.getElementById("legFilename").value;
+        var content = document.getElementById("legContent").value;
+        var blob = new Blob([content], { type: "text/plain" });
+
+        var storage = navigator.getDeviceStorage("sdcard");
+
+        var request = storage.addNamed(blob, name);
+
+        request.onsuccess = function () {
+          log(`[2.5] File created: ${this.result}`, "success");
+          legacyList();
+        };
+
+        request.onerror = function () {
+          log(`[2.5] Error: ${this.error.name}`, "err");
+        };
+      }
+
+      function legacyList() {
+        var listEl = document.getElementById("legacyFileList");
+        listEl.innerHTML = "";
+
+        var storage = navigator.getDeviceStorage("sdcard");
+        var cursor = storage.enumerate();
+
+        log("[2.5] Enumerating files...");
+
+        cursor.onsuccess = function () {
+          var file = this.result;
+
+          if (file && file.name !== null) {
+            var li = document.createElement("li");
+            li.innerHTML = `<span>${file.name}</span> <small>${file.size} B</small>`;
+            listEl.appendChild(li);
+
+            this.continue();
+          } else {
+            log("[2.5] Listing complete.");
+          }
+        };
+
+        cursor.onerror = function () {
+          log(`[2.5] Cursor Error: ${this.error.name}`, "err");
+        };
+      }
+
+      function legacyRead() {
+        var name = document.getElementById("legFilename").value;
+        var storage = navigator.getDeviceStorage("sdcard");
+        var request = storage.get(name);
+
+        request.onsuccess = function () {
+          var reader = new FileReader();
+          reader.onload = function (e) {
+            alert("File Content:\n" + e.target.result);
+          };
+          reader.readAsText(this.result);
+        };
+        request.onerror = function () {
+          log(`[2.5] Read Error: ${this.error.name}`, "err");
+        };
+      }
+
+      async function modernCreate() {
+        const name = document.getElementById("modFilename").value;
+        const content = document.getElementById("modContent").value;
+        const blob = new Blob([content], { type: "application/json" });
+
+        const storage = navigator.b2g.getDeviceStorage("sdcard");
+
+        try {
+          const result = await storage.addNamed(blob, name);
+          log(`[3.0] Async Save Success: ${result}`, "success");
+          modernList();
+        } catch (err) {
+          log(`[3.0] Async Error: ${err}`, "err");
+        }
+      }
+
+      async function modernList() {
+        const listEl = document.getElementById("modernFileList");
+        listEl.innerHTML = "";
+
+        const storage = navigator.b2g.getDeviceStorage("sdcard");
+
+        const iterable = storage.enumerate();
+        const iterator = iterable.values();
+
+        let result = await iterator.next();
+
+        log("[3.0] Starting async iteration...");
+
+        while (!result.done) {
+          const file = result.value;
+          if (file && file.name) {
+            var li = document.createElement("li");
+            li.innerHTML = `<span>${file.name}</span> <small>${file.size} B</small>`;
+            listEl.appendChild(li);
+          }
+          result = await iterator.next();
+        }
+        log("[3.0] Iteration finished.");
+      }
+
+      async function modernDelete() {
+        const name = document.getElementById("modFilename").value;
+        const storage = navigator.b2g.getDeviceStorage("sdcard");
+
+        try {
+          await storage.delete(name);
+          log(`[3.0] Deleted: ${name}`, "success");
+          modernList();
+        } catch (err) {
+          log(`[3.0] Delete Failed: ${err}`, "err");
+        }
+      }
+    </script>
+  </body>
+</html>
