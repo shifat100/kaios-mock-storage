@@ -210,13 +210,13 @@
             <span>KaiOS Storage Studio</span>
         </div>
         <div class="top-controls">
-            <select id="apiMode">
+            <select id="apiMode" onchange="refreshFileList()">
                 <option value="2.5">API: KaiOS 2.5 (DOMRequest)</option>
                 <option value="3.0">API: KaiOS 3.0 (Async/Promise)</option>
             </select>
             <select id="storageMode" onchange="refreshFileList()">
-                <option value="internal">Drive: Internal (/sdcard/)</option>
-                <option value="external">Drive: External (/sdcard1/)</option>
+                <option value="internal">Drive: Internal (sdcard)</option>
+                <option value="external">Drive: External (sdcard1)</option>
             </select>
             <button class="btn-outline" onclick="window.location.href = window.location.href.split('?')[0] + '?mode=explorer'">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/></svg>
@@ -290,19 +290,20 @@
                     <span>Command Runner (JS)</span>
                     <button class="btn-outline" style="padding: 2px 8px; font-size: 0.7rem;" onclick="runCommand()">▶ Run</button>
                 </div>
-                <textarea class="cmd-input" id="cmdInput" spellcheck="false" placeholder="// 'storage' & 'log' are available. Try:
+                <textarea class="cmd-input" id="cmdInput" spellcheck="false" placeholder="// 'storage' refers to the currently selected drive.
+// For KaiOS 3.0: internal=sdcard, external=sdcard1
 storage.freeSpace().onsuccess = function() {
   log('Free Space: ' + this.result);
 }">
-// Get Free Space info
+// Get Free Space info (works for both sdcard & sdcard1)
 storage.freeSpace().onsuccess = function() {
-  log("Free Space: " + (this.result/1024).toFixed(2) + " KB", "success");
+  log("Free Space: " + (this.result/1024/1024).toFixed(2) + " MB", "success");
 }</textarea>
             </div>
 
             <!-- CONSOLE LOGS -->
             <div class="console-logs" id="consoleOutput">
-                <div class="log-entry"><span class="log-time">[System]</span> Dashboard Ready. Mode: Responsive.</div>
+                <div class="log-entry"><span class="log-time">[System]</span> Dashboard Ready. KaiOS 3.0 dual-storage: sdcard (internal) + sdcard1 (external).</div>
             </div>
 
         </div>
@@ -323,50 +324,67 @@ storage.freeSpace().onsuccess = function() {
 
         // --- CORE HELPERS ---
         function getContext() {
-            const api = document.getElementById('apiMode').value;
-            const drive = document.getElementById('storageMode').value; // internal, external
-            
+            const api   = document.getElementById('apiMode').value;
+            const drive = document.getElementById('storageMode').value; // 'internal' | 'external'
+
             let storage;
             if (api === '2.5') {
+                // KaiOS 2.5: navigator.getDeviceStorages() returns an array.
+                // Index 0 = internal sdcard, index 1 = external sdcard1.
                 const storages = navigator.getDeviceStorages('sdcard');
-                storage = (drive === 'internal') ? storages[0] : storages[1];
+                storage = (drive === 'internal') ? storages[0] : (storages[1] || storages[0]);
             } else {
-                const storages = navigator.b2g.getDeviceStorages('sdcard');
-                storage = (drive === 'internal') ? storages[0] : storages[1];
+                // KaiOS 3.0: navigator.b2g.getDeviceStorage() takes a type string.
+                // Internal  → "sdcard"
+                // External  → "sdcard1"  (separate volume / IDBObjectStore)
+                const type = (drive === 'internal') ? 'sdcard' : 'sdcard1';
+                storage = navigator.b2g.getDeviceStorage(type);
             }
             return { storage, api, drive };
         }
 
         // --- ACTIONS ---
+
+        // Helper: strip the /<type>/ prefix that the polyfill adds to File.name
+        // e.g. "/sdcard/demo.txt" → "demo.txt"
+        function stripPrefix(name) {
+            return name.replace(/^\/[^/]+\//, '');
+        }
+
         const actions = {
             save: function() {
-                const { storage, api } = getContext();
-                const name = document.getElementById('fileName').value;
+                const { storage, api, drive } = getContext();
+                const name    = document.getElementById('fileName').value.trim();
                 const content = document.getElementById('fileContent').value;
+                if (!name) { log('Filename is empty!', 'error'); return; }
                 const blob = new Blob([content], { type: 'text/plain' });
-
-                log(`Saving '${name}'...`);
+                log(`[${drive === 'internal' ? 'sdcard' : 'sdcard1'}] Saving '${name}'…`);
 
                 if (api === '2.5') {
                     const req = storage.addNamed(blob, name);
                     req.onsuccess = () => { log(`Saved: ${req.result}`, 'success'); refreshFileList(); };
-                    req.onerror = () => log(`Save Failed: ${req.error.name}`, 'error');
+                    req.onerror   = () => log(`Save Failed: ${req.error.name}`, 'error');
                 } else {
-                    storage.addNamed(blob, name)
-                        .then(res => { log(`Async Saved: ${res}`, 'success'); refreshFileList(); })
-                        .catch(err => log(`Async Error: ${err}`, 'error'));
+                    // KaiOS 3.0 — StorageRequest is also thenable
+                    const req = storage.addNamed(blob, name);
+                    req.onsuccess = (e) => { log(`Saved: ${e.target.result}`, 'success'); refreshFileList(); };
+                    req.onerror   = (e) => log(`Save Failed: ${e.target.error.name}`, 'error');
                 }
             },
-            
+
             read: function() {
-                const { storage, api } = getContext();
-                const name = document.getElementById('fileName').value;
+                const { storage, api, drive } = getContext();
+                let name = document.getElementById('fileName').value.trim();
+                if (!name) { log('Filename is empty!', 'error'); return; }
+                // Strip any virtual prefix the user may have pasted from the file list
+                name = stripPrefix(name);
+                document.getElementById('fileName').value = name;
 
                 const handleFile = (file) => {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         document.getElementById('fileContent').value = e.target.result;
-                        log(`Read '${file.name}' (${file.size} bytes)`, 'success');
+                        log(`Read '${stripPrefix(file.name)}' (${file.size} bytes) from ${drive === 'internal' ? 'sdcard' : 'sdcard1'}`, 'success');
                     };
                     reader.readAsText(file);
                 };
@@ -374,76 +392,126 @@ storage.freeSpace().onsuccess = function() {
                 if (api === '2.5') {
                     const req = storage.get(name);
                     req.onsuccess = () => handleFile(req.result);
-                    req.onerror = () => log("File not found", 'error');
+                    req.onerror   = () => log(`File not found: '${name}'`, 'error');
                 } else {
-                    storage.get(name)
-                        .then(file => handleFile(file))
-                        .catch(err => log("File not found", 'error'));
+                    // KaiOS 3.0
+                    const req = storage.get(name);
+                    req.onsuccess = (e) => handleFile(e.target.result);
+                    req.onerror   = (e) => log(`File not found: '${name}' — ${e.target.error.name}`, 'error');
                 }
             },
 
             delete: function() {
-                const { storage, api } = getContext();
-                const name = document.getElementById('fileName').value;
-                
-                if(!confirm(`Delete ${name}?`)) return;
+                const { storage, api, drive } = getContext();
+                let name = document.getElementById('fileName').value.trim();
+                if (!name) { log('Filename is empty!', 'error'); return; }
+                name = stripPrefix(name);
+                if (!confirm(`Delete '${name}' from ${drive === 'internal' ? 'sdcard' : 'sdcard1'}?`)) return;
 
                 if (api === '2.5') {
                     const req = storage.delete(name);
                     req.onsuccess = () => { log(`Deleted '${name}'`, 'warn'); refreshFileList(); };
-                    req.onerror = () => log(`Delete failed`, 'error');
+                    req.onerror   = () => log(`Delete failed: ${req.error.name}`, 'error');
                 } else {
-                    storage.delete(name)
-                        .then(() => { log(`Deleted '${name}'`, 'warn'); refreshFileList(); })
-                        .catch(err => log(`Delete failed`, 'error'));
+                    // KaiOS 3.0
+                    const req = storage.delete(name);
+                    req.onsuccess = () => { log(`Deleted '${name}' from ${drive === 'internal' ? 'sdcard' : 'sdcard1'}`, 'warn'); refreshFileList(); };
+                    req.onerror   = (e) => log(`Delete failed: ${e.target.error.name}`, 'error');
                 }
             }
         };
 
         // --- FILE LIST ---
         async function refreshFileList() {
-            const { storage, api } = getContext();
+            const { storage, api, drive } = getContext();
             const listEl = document.getElementById('fileList');
-            listEl.innerHTML = '';
-            
-            // Random space bar simulation
-            const pct = Math.floor(Math.random() * 60 + 20);
-            document.getElementById('spaceBar').style.width = pct + '%';
-            document.getElementById('storageLabel').innerText = pct + "% Used";
+            listEl.innerHTML = '<li style="padding:15px; color:#666; text-align:center;">Loading…</li>';
 
             const addFileUI = (file) => {
+                // Strip the virtual /<type>/ prefix that polyfill adds to file.name
+                const displayName = file.name.replace(/^\/[^/]+\//, '');
                 const li = document.createElement('li');
                 li.className = 'file-item';
                 li.innerHTML = `
                     <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
                     <div class="file-info">
-                        <span class="file-name" title="${file.name}">${file.name}</span>
-                        <span class="file-meta">${(file.size/1024).toFixed(1)} KB</span>
+                        <span class="file-name" title="${displayName}">${displayName}</span>
+                        <span class="file-meta">${(file.size / 1024).toFixed(1)} KB · ${drive === 'internal' ? 'sdcard' : 'sdcard1'}</span>
                     </div>
                 `;
+                // Clicking a file puts the clean (no-prefix) name in the filename input
                 li.onclick = () => {
-                    document.getElementById('fileName').value = file.name;
+                    document.getElementById('fileName').value = displayName;
                     actions.read();
                 };
                 listEl.appendChild(li);
             };
 
+            // ── Update storage-usage bar ─────────────────────────────────────
+            const updateSpaceBar = (usedBytes) => {
+                // freeSpace always returns the simulated 2 GiB constant;
+                // show a percentage capped at a sensible demo maximum.
+                const MAX_DISPLAY = 10 * 1024; // 10 KB demo ceiling for the bar
+                const pct = Math.min(100, Math.round((usedBytes / MAX_DISPLAY) * 100));
+                document.getElementById('spaceBar').style.width = pct + '%';
+                document.getElementById('storageLabel').innerText =
+                    usedBytes < 1024
+                        ? `${usedBytes} B used`
+                        : `${(usedBytes / 1024).toFixed(1)} KB used`;
+            };
+
+            // ── KaiOS 2.5 path ───────────────────────────────────────────────
             if (api === '2.5') {
+                // usedSpace (2.5 DOMRequest style)
+                const spReq = storage.usedSpace();
+                if (spReq) {
+                    spReq.onsuccess = function () { updateSpaceBar(this.result || 0); };
+                }
+
+                listEl.innerHTML = ''; // clear "Loading…" once we start
                 const cursor = storage.enumerate();
-                cursor.onsuccess = function() {
-                    if(this.result && this.result.name !== null) {
+                cursor.onsuccess = function () {
+                    if (this.result && this.result.name !== null) {
                         addFileUI(this.result);
                         this.continue();
+                    } else if (listEl.children.length === 0) {
+                        listEl.innerHTML = '<li style="padding:15px; color:#666; text-align:center;">No files found.</li>';
                     }
-                }
-            } else {
-                const iterable = storage.enumerate();
-                const iterator = iterable.values();
+                };
+                cursor.onerror = () => {
+                    listEl.innerHTML = '<li style="padding:15px; color:var(--danger); text-align:center;">Enumerate error.</li>';
+                };
+                return;
+            }
+
+            // ── KaiOS 3.0 path (polyfill) ────────────────────────────────────
+            // usedSpace() → StorageRequest (also thenable)
+            try {
+                const used = await storage.usedSpace();
+                updateSpaceBar(used);
+            } catch (_) { /* non-fatal */ }
+
+            // enumerate() → FileIterable → async iterator
+            const iterable = storage.enumerate();
+            const iterator = iterable.values();
+            let fileCount = 0;
+            listEl.innerHTML = ''; // clear "Loading…"
+
+            try {
                 let res = await iterator.next();
-                while(!res.done) {
-                    if(res.value && res.value.name) addFileUI(res.value);
+                while (!res.done) {
+                    if (res.value && res.value.name) {
+                        addFileUI(res.value);
+                        fileCount++;
+                    }
                     res = await iterator.next();
                 }
+            } catch (err) {
+                log(`Enumerate error: ${err.message || err}`, 'error');
+            }
+
+            if (fileCount === 0) {
+                listEl.innerHTML = '<li style="padding:15px; color:#666; text-align:center;">No files found.</li>';
             }
         }
 
@@ -461,13 +529,35 @@ storage.freeSpace().onsuccess = function() {
         }
 
         // --- INIT ---
-        const storages = navigator.getDeviceStorages('sdcard');
-        storages.forEach(s => {
-            s.addEventListener('change', (e) => {
-                log(`⚡ EVENT: ${e.reason} at ${e.path}`, 'warn');
+        // KaiOS 2.5: attach "change" listeners via getDeviceStorages() array.
+        // KaiOS 3.0 polyfill: attach listeners on each individual storage type
+        //                     (sdcard = internal, sdcard1 = external).
+        function attachChangeListeners() {
+            const changeHandler = (e) => {
+                log(`⚡ EVENT [${e.target ? e.target.storageName : '?'}]: ${e.reason} → ${e.path}`, 'warn');
                 refreshFileList();
-            });
-        });
+            };
+
+            if (navigator.getDeviceStorages) {
+                // 2.5-style: returns an array covering all volumes
+                try {
+                    const storages = navigator.getDeviceStorages('sdcard');
+                    storages.forEach(s => s.addEventListener('change', changeHandler));
+                } catch(e) { /* silently ignore if 2.5 API not available */ }
+            }
+
+            if (navigator.b2g && navigator.b2g.getDeviceStorage) {
+                // 3.0-style: two separate volumes
+                try {
+                    navigator.b2g.getDeviceStorage('sdcard')
+                        .addEventListener('change', changeHandler);
+                    navigator.b2g.getDeviceStorage('sdcard1')
+                        .addEventListener('change', changeHandler);
+                } catch(e) { /* silently ignore if 3.0 API not available */ }
+            }
+        }
+
+        attachChangeListeners();
         refreshFileList();
     </script>
 </body>
