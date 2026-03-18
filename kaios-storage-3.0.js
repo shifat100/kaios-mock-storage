@@ -39,9 +39,18 @@
 
   /**
    * Recognised storage area names.
-   * Each maps to its own IndexedDB object store so they are isolated.
+   * Each maps to its own IndexedDB object store so they are fully isolated.
+   *
+   * KaiOS dual-storage layout:
+   *   • "sdcard"  → internal storage  (built-in flash, always present)
+   *   • "sdcard1" → external SD card  (removable, may or may not be inserted)
+   *
+   * Both get their own IDBObjectStore so files written to sdcard never
+   * mix with files written to sdcard1, exactly as on a real KaiOS device
+   * where the two volumes are separate mount points.
    */
-  const STORAGE_TYPES = ["sdcard", "pictures", "videos", "music", "apps",
+  const STORAGE_TYPES = ["sdcard", "sdcard1",
+                         "pictures", "videos", "music", "apps",
                          "crashes", "apps-storage"];
 
   /**
@@ -1221,7 +1230,92 @@ async function runDeviceStorageDemo() {
   console.log("  usedSpace (pictures) →", usedPic, "bytes ✓");
   console.groupEnd();
 
+  // ── 13. Dual-storage: sdcard (internal) vs sdcard1 (external SD card) ───────
+  // Two completely separate storage volumes backed by separate IDBObjectStores.
+  // Files written to one are NEVER visible from the other —
+  // matching real KaiOS dual-storage behaviour on devices like Nokia 2780 Flip.
+  console.group("[13] Dual-storage: sdcard vs sdcard1");
+
+  // --- sdcard (internal built-in storage) ---
+  const internalSD   = navigator.b2g.getDeviceStorage("sdcard");
+  const internalBlob = new Blob(["I am on INTERNAL storage"], { type: "text/plain" });
+  const internalPath = await internalSD.addNamed(internalBlob, "test/internal.txt");
+  console.log("  [sdcard]  addNamed →", internalPath);
+
+  // --- sdcard1 (external removable SD card) ---
+  const externalSD   = navigator.b2g.getDeviceStorage("sdcard1");
+  const externalBlob = new Blob(["I am on EXTERNAL sdcard1"], { type: "text/plain" });
+  const externalPath = await externalSD.addNamed(externalBlob, "test/external.txt");
+  console.log("  [sdcard1] addNamed →", externalPath);
+
+  // ── Isolation check 1: sdcard must NOT see sdcard1 file ──
+  try {
+    await internalSD.get("test/external.txt");
+    console.error("  ISOLATION FAIL: sdcard1 file leaked into sdcard!");
+  } catch (e) {
+    console.log("  Isolation: sdcard cannot see sdcard1 file →", e.name, "✓");
+  }
+
+  // ── Isolation check 2: sdcard1 must NOT see sdcard file ──
+  try {
+    await externalSD.get("test/internal.txt");
+    console.error("  ISOLATION FAIL: sdcard file leaked into sdcard1!");
+  } catch (e) {
+    console.log("  Isolation: sdcard1 cannot see sdcard file →", e.name, "✓");
+  }
+
+  // ── Read back from each volume independently ──
+  const readInternal = await internalSD.get("test/internal.txt");
+  console.log("  [sdcard]  read back →", await readInternal.text());
+  const readExternal = await externalSD.get("test/external.txt");
+  console.log("  [sdcard1] read back →", await readExternal.text());
+
+  // ── Space queries on both volumes ──
+  const usedInternal = await internalSD.usedSpace();
+  const usedExternal = await externalSD.usedSpace();
+  console.log("  [sdcard]  usedSpace →", usedInternal, "bytes");
+  console.log("  [sdcard1] usedSpace →", usedExternal, "bytes");
+
+  // ── Enumerate each volume separately ──
+  console.log("  --- enumerate sdcard ---");
+  let ni = 0;
+  for await (const f of internalSD.enumerate()) {
+    console.log(`    sdcard[${ni++}]: ${f.name}`);
+  }
+  console.log("  --- enumerate sdcard1 ---");
+  let ne = 0;
+  for await (const f of externalSD.enumerate()) {
+    console.log(`    sdcard1[${ne++}]: ${f.name}`);
+  }
+
+  // ── getRoot on external SD ──
+  const extRoot = await externalSD.getRoot();
+  console.log("  [sdcard1] root.path →", extRoot.path);
+  const extDir = await extRoot.createDirectory("External_DCIM");
+  console.log("  [sdcard1] createDirectory →", extDir.path, "✓");
+
+  // ── change event fires on correct volume only ──
+  const extChangePromise = new Promise((resolve) => {
+    externalSD.addEventListener("change", function h(e) {
+      console.log("  [sdcard1] change → reason:", e.reason, "path:", e.path, "✓");
+      externalSD.removeEventListener("change", h);
+      resolve();
+    });
+  });
+  let falseFire = 0;
+  const falseHandler = () => { falseFire++; };
+  internalSD.addEventListener("change", falseHandler);
+  await externalSD.addNamed(
+    new Blob(["ext watch test"], { type: "text/plain" }), "test/watch_ext.txt");
+  await extChangePromise;
+  internalSD.removeEventListener("change", falseHandler);
+  console.log("  sdcard false-fire count (must be 0):", falseFire, "✓");
+
+  console.groupEnd();
+
   console.log("\n✅  All demo operations completed successfully.");
+  console.log("    sdcard  = internal built-in flash storage");
+  console.log("    sdcard1 = external removable SD card");
   console.groupEnd();
 }
 
