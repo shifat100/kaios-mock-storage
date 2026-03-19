@@ -1,137 +1,117 @@
 
-# KaiOS Universal Device Storage Polyfill
 
-![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Platform](https://img.shields.io/badge/platform-KaiOS_2.5_%26_3.0-orange.svg)
+# KaiOS DeviceStorage Polyfills (v2.5 & v3.0)
 
-A robust simulation of the **KaiOS Device Storage API** (used in Firefox OS, KaiOS 2.5, and KaiOS 3.0) for modern web browsers. 
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
+[![KaiOS](https://img.shields.io/badge/KaiOS-2.5%20%7C%203.0-blue.svg)](https://www.kaiostech.com/)
 
-This library allows developers to test file management features (SD Card access, file creation, reading, and deletion) directly in Chrome, Firefox, or Edge without needing a physical KaiOS device or the simulator. It uses **IndexedDB** to persist files across sessions.
+A set of drop-in JavaScript polyfills that emulate the proprietary **KaiOS DeviceStorage API** in standard desktop browsers (Chrome, Firefox, Safari, Edge). 
+
+These polyfills are designed for developers who want to build and debug KaiOS applications on their desktop machines without constantly needing a physical device or a slow emulator.
 
 ## 🚀 Features
 
-*   **Universal Support:** Emulates both **KaiOS 2.5** (DOMRequest) and **KaiOS 3.0** (Promise-based/`b2g`) APIs.
-*   **Persistent Storage:** Uses the browser's `IndexedDB` to save files. Files remain available even after refreshing the page.
-*   **Multi-Storage Simulation:** Simulates Internal Storage (`/sdcard/`) and External SD Card (`/sdcard1/`).
-*   **Hybrid Arrays:** Fully supports `getDeviceStorages()` returning iterable arrays.
-*   **Built-in File Explorer:** Includes a visual GUI to upload, rename, and delete files for debugging purposes.
+- **High Accuracy:** Logic is mirrored directly from the original Gecko/B2G C++ source code (`nsDeviceStorage.cpp`).
+- **Persistent Storage:** Uses **IndexedDB** as a backend; files you save persist even after refreshing the page.
+- **Dual Volume Support:** Properly handles internal `sdcard` and external `sdcard1` volumes.
+- **Event System:** Full support for `onchange` and `addEventListener('change')` events when files are created, modified, or deleted.
+- **Async Iterators (KaiOS 3.0):** Implements the new `FileIterable` protocol, supporting `for await...of` loops for file enumeration.
+- **Native File Compatibility:** Returns real `File` objects compatible with `URL.createObjectURL` and `FileReader`.
+- **Built-in Explorer:** A visual UI to manage your virtual file system directly in the browser.
 
+---
 
+## 🛠 Installation
 
-## 📦 Installation
-
-Simply download the script and include it in your `index.html` **before** your main application logic.
+Simply include the desired version at the very top of your HTML file, before any other scripts:
 
 ```html
-<script src="path/to/kaios-storage-polyfill.js"></script>
-<script src="app.js"></script>
+<!-- For KaiOS 2.5 Apps -->
+<script src="kaios-storage-2.5.js"></script>
+
+<!-- For KaiOS 3.0 Apps -->
+<script src="kaios-storage-3.0.js"></script>
 ```
 
-> **Note:** This script overwrites `navigator.getDeviceStorage` and `navigator.b2g.getDeviceStorage`. Ensure you only load this in a development environment or wrap it in a condition if deploying to a real device.
+*Note: The polyfill automatically detects if it is running on a real KaiOS device and will disable itself to let the native API take over.*
 
 ---
 
-## 🛠 Usage
+## 📂 Built-in File Explorer
 
-### 1. KaiOS 2.5 Style (DOMRequest)
-Used by most legacy KaiOS devices. Returns a `DOMRequest` object with `onsuccess` and `onerror`.
+Both polyfills include a visual **DeviceStorage Explorer**. This allows you to upload files from your computer into the virtual KaiOS storage, delete files, or preview images/videos.
 
-```javascript
-// Get storage access (music, pictures, videos, sdcard)
-var storage = navigator.getDeviceStorage('sdcard');
+### How to open:
+1. **Via URL Parameter:** Add `?explorer` to your app's URL.
+   - `http://localhost:8080/index.html?explorer`
+   - `http://localhost:8080/index.html?explorer=sdcard1` (Opens external SD card)
+2. **Via Console:** Call `__DeviceStorageExplorer()` in the browser developer tools.
 
-// Create a file
-var file = new Blob(["Hello KaiOS"], {type: "text/plain"});
-var request = storage.addNamed(file, "my_document.txt");
+---
 
-request.onsuccess = function () {
-    console.log("File saved: " + this.result);
-};
+## 📖 API Usage
 
-request.onerror = function () {
-    console.error("Error: " + this.error.name);
-};
-```
-
-### 2. KaiOS 3.0 Style (Async/Promise)
-Used by newer KaiOS 3.x devices via the `navigator.b2g` namespace.
+### KaiOS 3.0 (Modern)
+The 3.0 version uses the `navigator.b2g` namespace and Async Iterators for enumeration.
 
 ```javascript
-async function saveFile() {
-    // Note the use of 'b2g' namespace
-    const storage = navigator.b2g.getDeviceStorage('sdcard');
-    const file = new Blob(["Async Content"], {type: "text/plain"});
+const sdcard = navigator.b2g.getDeviceStorage("sdcard");
 
-    try {
-        const path = await storage.addNamed(file, "async_doc.txt");
-        console.log("File created at: ", path);
-    } catch (err) {
-        console.error("Save failed", err);
-    }
+// 1. Add a file
+await sdcard.addNamed(myBlob, "photos/vacation.jpg");
+
+// 2. Modern Enumeration (Async Iterator)
+const iterable = sdcard.enumerate();
+for await (const file of iterable) {
+  console.log("Found file:", file.name, file.size);
 }
+
+// 3. Space usage
+const free = await sdcard.freeSpace();
+console.log(`Free space: ${free} bytes`);
 ```
 
-### 3. Handling Multiple Storages (SD Card)
-Accessing internal vs. external storage.
+### KaiOS 2.5 (Legacy)
+The 2.5 version uses the direct `navigator` namespace and the legacy `DOMCursor` for enumeration.
 
 ```javascript
-// Returns an array: [0] = Internal, [1] = SD Card
-var storages = navigator.getDeviceStorages('sdcard');
+var storage = navigator.getDeviceStorage("pictures");
 
-// Save to External SD Card (/sdcard1/)
-var sdCard = storages[1]; 
-sdCard.addNamed(blob, "backup.dat");
+// 1. Add a file
+var request = storage.addNamed(blob, "image.png");
+request.onsuccess = function() { console.log("Saved!"); };
+
+// 2. Legacy Enumeration (DOMCursor)
+var cursor = storage.enumerate();
+cursor.onsuccess = function() {
+  var file = this.result;
+  if (file) {
+    console.log("File found: " + file.name);
+    this.continue();
+  }
+};
 ```
 
 ---
 
-## 📂 Visual File Explorer (Debug Mode)
+## 🔍 Technical Implementation Details
 
-This polyfill comes with a built-in GUI to help you manage the virtual file system without writing code.
+To ensure 1:1 compatibility with native KaiOS apps, the following architectural details were implemented:
 
-**How to activate:**
-Add `?mode=explorer` to your browser URL.
-
-**Example:**
-`http://localhost:8080/index.html?mode=explorer`
-
-**Explorer Capabilities:**
-*   Select Drive (Internal `/sdcard/` or External `/sdcard1/`).
-*   **Upload** real files from your computer to the virtual storage.
-*   **Rename** existing virtual files.
-*   **Delete** virtual files.
-
-![Explorer Mode](https://via.placeholder.com/600x200?text=Explorer+Mode+UI+Preview)
+| Feature | KaiOS Native Behavior | Polyfill Implementation |
+| :--- | :--- | :--- |
+| **Backend** | Physical Disk / Ext4 / VFAT | IndexedDB (Object Store per volume) |
+| **Request Object** | `DOMRequest` with `readyState` | Custom `StorageRequest` class with micro-tasking |
+| **Enumeration** | `DOMCursor` (2.5) / `FileIterable` (3.0) | Full async iterator support |
+| **Path Safety** | Rejects `..` and `~` | Strict regex validation for directory traversal |
+| **MIME Handling** | Enforced by Storage Type | Validates Blob type against storage category |
 
 ---
 
-## 📖 API Support Matrix
+## 📜 License
 
-| Method | Description | KaiOS 2.5 | KaiOS 3.0 |
-| :--- | :--- | :---: | :---: |
-| `add(file)` | Add file with auto-generated name | ✅ | ✅ |
-| `addNamed(file, name)` | Add file with specific name | ✅ | ✅ |
-| `get(name)` | Retrieve a file as a Blob/File | ✅ | ✅ |
-| `delete(name)` | Remove a file | ✅ | ✅ |
-| `enumerate()` | List all files (Cursor/Iterator) | ✅ | ✅ |
-| `freeSpace()` | Check available space | ✅ | ❌ |
-| `spaceInfo()` | Check space (Total/Used/Free) | ❌ | ✅ |
-| `addEventListener` | Listen for 'change' events | ✅ | ❌ |
+This project is licensed under the **Mozilla Public License 2.0 (MPL 2.0)** - the same license used by the original Gecko source code.
 
----
+## 🤝 Contributing
 
-## 🔧 Technical Details
-
-*   **Database Name:** `KaiOS_Universal_Storage` (IndexedDB)
-*   **Store Name:** `files`
-*   **Virtual Paths:**
-    *   Internal: prepends `/sdcard/`
-    *   External: prepends `/sdcard1/`
-
-## 📝 License
-
-This project is licensed under the **MIT License**.
-
-**Author:** [shifat100]  
-**Last Updated:** 2026-03-03
+If you find an edge-case where a native app behaves differently than the polyfill, please open an issue with a code snippet of the failing logic.
