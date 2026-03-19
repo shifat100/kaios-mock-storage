@@ -1,17 +1,15 @@
 /**
- * KaiOS 2.5 DeviceStorage API Polyfill  v2.0
- * ===========================================
+ * KaiOS 2.5 DeviceStorage API Polyfill  v2.1.1
+ * ============================================
  * Drop-in emulation of navigator.getDeviceStorage / getDeviceStorages
  * for standard browsers (Chrome, Firefox) backed by IndexedDB.
  *
- * NEW in v2:
- *   • Two physical sdcard volumes: "sdcard" (internal) and "sdcard1" (external)
- *   • Built-in file-system explorer — open by navigating to any page that
- *     loads this script with  ?explorer  in the URL, e.g.
- *       yourapp.html?explorer
- *       yourapp.html?explorer=sdcard1        <- open on external card
- *       yourapp.html?explorer=pictures       <- open on pictures type
- *   • Explorer supports: browse / upload / download / delete / preview
+ * NEW in v2.1.1:
+ *   • Fixed Strict Mode TypeError (Cannot set property lastModifiedDate)
+ *     by using Object.defineProperty to safely shadow prototype getters.
+ *   • Native File/Blob storage in IndexedDB (Zero-RAM copies for large files)
+ *   • Native File object returns (Compatible with URL.createObjectURL)
+ *   • Native .onchange event handler support
  *
  * Compatible: ES5, no Arrow functions, no classes, no fetch.
  * License: MPL 2.0
@@ -188,24 +186,17 @@
 
   /* =========================================================================
    * 5.  Volume registry
-   *
-   *     storageType – KaiOS type string ("sdcard", "music", etc.)
-   *     storageName – unique mount-point ID, used as IDB database suffix
-   *     isDefault   – volume returned by getDeviceStorage()
-   *     label       – human-readable name shown in the explorer
    * ===================================================================== */
   var VOLUME_DEFS = [
-    /* sdcard type – TWO volumes */
     { storageType:'sdcard',   storageName:'sdcard',   isDefault:true,  label:'Internal Storage (sdcard)'  },
     { storageType:'sdcard',   storageName:'sdcard1',  isDefault:false, label:'External SD Card (sdcard1)' },
-    /* single-volume media types */
     { storageType:'music',    storageName:'music',    isDefault:true,  label:'Music'    },
     { storageType:'videos',   storageName:'videos',   isDefault:true,  label:'Videos'   },
     { storageType:'pictures', storageName:'pictures', isDefault:true,  label:'Pictures' }
   ];
 
   /* =========================================================================
-   * 6.  IndexedDB adapter  (one DB per storageName)
+   * 6.  IndexedDB adapter
    * ===================================================================== */
   var _dbCache = {};
 
@@ -273,147 +264,85 @@
   }
 
   /* =========================================================================
-   * 8.  Blob <-> ArrayBuffer  (FileReader, ES5-safe, no fetch)
+   * 8.  Core storage operations
    * ===================================================================== */
-  function blobToArrayBuffer(blob, cb) {
-    var fr = new FileReader();
-    fr.onload  = function () { cb(null, fr.result); };
-    fr.onerror = function () { cb(fr.error, null); };
-    fr.readAsArrayBuffer(blob);
-  }
-  function arrayBufferToBlob(buf, mime) {
-    return new Blob([buf], { type: mime || 'application/octet-stream' });
-  }
 
-  /**
-   * DSFile – a KaiOS DeviceStorageFile-compatible object.
-   *
-   * Blob.size and Blob.name are read-only getters in modern browsers, so we
-   * cannot simply assign onto a Blob instance.  Instead we wrap the Blob in a
-   * plain object that exposes every Blob method/property plus our own metadata
-   * fields (name, size, lastModified, path, type).  Callers can still call
-   * .slice(), .text(), .arrayBuffer(), .stream(), pass it to FileReader, or
-   * hand it to URL.createObjectURL() because we forward to the inner Blob.
-   */
-  function DSFile(blob, meta) {
-    // Own metadata fields (writable)
-    this.name         = meta.name         || '';
-    this.size         = meta.size         || blob.size;
-    this.lastModified = meta.lastModified || Date.now();
-    this.path         = meta.path         || meta.name || '';
-    this.type         = meta.type         || blob.type || 'application/octet-stream';
-    // Keep a reference to the real Blob for all native operations
-    this._blob        = blob;
-  }
-
-  // Forward all Blob API surface to the inner blob
-  DSFile.prototype.slice = function () {
-    return this._blob.slice.apply(this._blob, arguments);
-  };
-  DSFile.prototype.stream = function () {
-    return this._blob.stream ? this._blob.stream() : null;
-  };
-  DSFile.prototype.text = function () {
-    return this._blob.text ? this._blob.text() : DSPromise.reject(new Error('text() not available'));
-  };
-  DSFile.prototype.arrayBuffer = function () {
-    return this._blob.arrayBuffer
-      ? this._blob.arrayBuffer()
-      : new DSPromise(function (res, rej) {
-          var fr = new FileReader();
-          fr.onload  = function () { res(fr.result); };
-          fr.onerror = function () { rej(fr.error); };
-          fr.readAsArrayBuffer(this._blob);
-        });
-  };
-
-  /**
-   * URL.createObjectURL needs a real Blob/File.
-   * Callers that need a raw Blob can use dsFile._blob directly, or call this
-   * helper which is also
-
-  /* =========================================================================
-   * 9.  Core storage operations
-   * ===================================================================== */
   function _storeBlob(storageName, path, blob, mode, req) {
-    blobToArrayBuffer(blob, function (err, buf) {
-      if (err) { req._fireError('InvalidStateError', err.message); return; }
-
-      if (mode === 'append') {
-        withStore(storageName, 'readwrite', function (dbErr, store) {
-          if (dbErr) { req._fireError('UnknownError', dbErr.message); return; }
-          var gr = store.get(path);
-          gr.onsuccess = function () {
-            var finalBuf;
-            if (gr.result) {
-              var a = new Uint8Array(gr.result.data), b = new Uint8Array(buf);
-              var c = new Uint8Array(a.length + b.length);
-              c.set(a, 0); c.set(b, a.length);
-              finalBuf = c.buffer;
-            } else {
-              finalBuf = buf;
-            }
-            var rec = {
-              path: path, name: basename(path),
-              type: blob.type || 'application/octet-stream',
-              size: finalBuf.byteLength, lastModified: Date.now(), data: finalBuf
-            };
-            var pr = store.put(rec);
-            pr.onsuccess = function () { _notifyChange(storageName, 'modified', path); req._fireSuccess(path); };
-            pr.onerror   = function () { req._fireError('UnknownError', pr.error && pr.error.message); };
-          };
-          gr.onerror = function () { req._fireError('UnknownError', gr.error && gr.error.message); };
-        });
-      } else {
-        withStore(storageName, 'readwrite', function (dbErr, store) {
-          if (dbErr) { req._fireError('UnknownError', dbErr.message); return; }
+    if (mode === 'append') {
+      withStore(storageName, 'readwrite', function (dbErr, store) {
+        if (dbErr) { req._fireError('UnknownError', dbErr.message); return; }
+        var gr = store.get(path);
+        gr.onsuccess = function () {
+          var finalBlob;
+          if (gr.result && gr.result.data) {
+            // Concatenate existing blob with new blob
+            finalBlob = new Blob([gr.result.data, blob], { type: blob.type || 'application/octet-stream' });
+          } else {
+            finalBlob = blob;
+          }
           var rec = {
             path: path, name: basename(path),
-            type: blob.type || 'application/octet-stream',
-            size: buf.byteLength, lastModified: Date.now(), data: buf
+            type: finalBlob.type,
+            size: finalBlob.size, lastModified: Date.now(), data: finalBlob
           };
           var pr = store.put(rec);
-          pr.onsuccess = function () { _notifyChange(storageName, 'created', path); req._fireSuccess(path); };
+          pr.onsuccess = function () { _notifyChange(storageName, 'modified', path); req._fireSuccess(path); };
           pr.onerror   = function () { req._fireError('UnknownError', pr.error && pr.error.message); };
-        });
-      }
-    });
+        };
+        gr.onerror = function () { req._fireError('UnknownError', gr.error && gr.error.message); };
+      });
+    } else {
+      withStore(storageName, 'readwrite', function (dbErr, store) {
+        if (dbErr) { req._fireError('UnknownError', dbErr.message); return; }
+        var rec = {
+          path: path, name: basename(path),
+          type: blob.type || 'application/octet-stream',
+          size: blob.size, lastModified: Date.now(), data: blob // Store Blob natively
+        };
+        var pr = store.put(rec);
+        pr.onsuccess = function () { _notifyChange(storageName, 'created', path); req._fireSuccess(path); };
+        pr.onerror   = function () { req._fireError('UnknownError', pr.error && pr.error.message); };
+      });
+    }
   }
 
   /**
-   * _recToFileEntry(rec) -> FileEntry plain object
-   *
-   * Blob.size, Blob.name, Blob.lastModified are read-only getters in all
-   * modern browsers — assigning to them throws a TypeError.
-   * We return a plain wrapper object that carries the metadata as own
-   * writable properties AND exposes the underlying Blob for reading/download.
-   * KaiOS apps typically access:
-   *   e.target.result.name
-   *   e.target.result.size
-   *   e.target.result.lastModified
-   *   e.target.result.type
-   *   e.target.result      (passed to FileReader directly)
-   * The wrapper satisfies all of these and is also instanceof-friendly
-   * because it delegates slice() so FileReader still works.
+   * Transforms an IndexedDB record into a native HTML5 File object with
+   * B2G-specific properties attached (.path and .lastModifiedDate)
    */
   function _recToFileEntry(rec) {
-    var blob = arrayBufferToBlob(rec.data, rec.type);
-    // Plain object – all props writable, no getter conflicts
-    var entry = {
-      name         : rec.name,
-      size         : rec.size,
-      lastModified : rec.lastModified,
-      type         : rec.type || 'application/octet-stream',
-      path         : rec.path,
-      // Delegate Blob methods so FileReader / createObjectURL work
-      slice        : function () { return blob.slice.apply(blob, arguments); },
-      arrayBuffer  : function () { return blob.arrayBuffer ? blob.arrayBuffer() : DSPromise.resolve(rec.data); },
-      text         : function () { return blob.text         ? blob.text()         : null; },
-      stream       : function () { return blob.stream       ? blob.stream()       : null; },
-      // Raw blob access for createObjectURL etc.
-      _blob        : blob
-    };
-    return entry;
+    var file;
+    try {
+      // Create a native File (supported in modern browsers)
+      file = new File([rec.data], rec.name, {
+        type: rec.type || 'application/octet-stream',
+        lastModified: rec.lastModified
+      });
+    } catch (e) {
+      // Fallback for extremely old environments without the File constructor
+      file = new Blob([rec.data], { type: rec.type || 'application/octet-stream' });
+      try { Object.defineProperty(file, 'name', { value: rec.name, enumerable: true }); } catch (ex) {}
+      try { Object.defineProperty(file, 'lastModified', { value: rec.lastModified, enumerable: true }); } catch (ex) {}
+    }
+    
+    // Safely bypass strict mode prototype getters by using defineProperty
+    try {
+      Object.defineProperty(file, 'lastModifiedDate', {
+        value: new Date(rec.lastModified),
+        enumerable: true,
+        configurable: true
+      });
+    } catch (e) {}
+
+    try {
+      Object.defineProperty(file, 'path', {
+        value: rec.path,
+        enumerable: true,
+        configurable: true
+      });
+    } catch (e) {}
+    
+    return file;
   }
 
   function _getFile(storageName, path, req) {
@@ -532,27 +461,42 @@
   }
 
   /* =========================================================================
-   * 10.  Change-event bus
+   * 9.  Change-event bus
    * ===================================================================== */
   var _changeListeners = {};
 
   function _notifyChange(storageName, operation, path) {
+    var ev = { 
+      storageName: storageName, 
+      operation: operation,
+      path: path, 
+      reason: operation, // Legacy B2G uses e.reason ('created', 'modified', 'deleted')
+      type: 'change' 
+    };
+
+    // 1. Notify addEventListener listeners
     var lst = _changeListeners[storageName];
-    if (!lst || !lst.length) { return; }
-    var ev = { storageName: storageName, operation: operation,
-               path: path, reason: operation, type: 'change' };
-    for (var i = 0; i < lst.length; i++) {
-      try { lst[i](ev); } catch (e) { DSWarn('change listener threw', e); }
+    if (lst && lst.length) {
+      for (var i = 0; i < lst.length; i++) {
+        try { lst[i](ev); } catch (e) { DSWarn('change listener threw', e); }
+      }
+    }
+
+    // 2. Notify direct instance.onchange handlers
+    var instance = _instanceCache[storageName];
+    if (instance && typeof instance.onchange === 'function') {
+      try { instance.onchange(ev); } catch (e) { DSWarn('onchange threw', e); }
     }
   }
 
   /* =========================================================================
-   * 11.  DeviceStorage object
+   * 10.  DeviceStorage object
    * ===================================================================== */
   function DeviceStorage(storageType, storageName, isDefault) {
     this.storageType = storageType;
     this.storageName = storageName;
     this['default']  = !!isDefault;
+    this.onchange    = null; // Native callback support
   }
 
   DeviceStorage.prototype._path = function (raw) {
@@ -648,7 +592,7 @@
   };
 
   /* =========================================================================
-   * 12.  navigator API installation
+   * 11.  navigator API installation
    * ===================================================================== */
   var _instanceCache = {};
 
@@ -686,11 +630,11 @@
   if (typeof navigator !== 'undefined') {
     navigator.getDeviceStorage  = getDeviceStorage;
     navigator.getDeviceStorages = getDeviceStorages;
-    DSLog('DeviceStorage polyfill v2 installed.');
+    DSLog('DeviceStorage polyfill v2.1.1 installed.');
   }
 
   /* =========================================================================
-   * 13.  Built-in File Explorer
+   * 12.  Built-in File Explorer
    *
    *  Activated when ?explorer appears in the page URL.
    *  Value (optional) picks the starting volume / type:
@@ -1016,8 +960,8 @@
 
     /* ---- Preview ---- */
     function _preview(rec) {
-      // rec here is a raw IDB record (from _getAllRecords), so use rec.data / rec.type directly
-      var blob = arrayBufferToBlob(rec.data, rec.type);
+      // rec is the raw IDB record; rec.data is the natively stored Blob
+      var blob = rec.data; 
       var url  = URL.createObjectURL(blob);
       var mime = rec.type || '';
       if (mime.indexOf('image/') === 0) {
@@ -1044,8 +988,8 @@
 
     /* ---- Download ---- */
     function _download(rec) {
-      // rec is a raw IDB record
-      var blob = arrayBufferToBlob(rec.data, rec.type);
+      // rec.data is the native Blob
+      var blob = rec.data;
       var url  = URL.createObjectURL(blob);
       var a    = document.createElement('a');
       a.href = url; a.download = rec.name;
@@ -1151,7 +1095,7 @@
   }());
 
   /* =========================================================================
-   * 14.  Public exports
+   * 13.  Public exports
    * ===================================================================== */
   var publicAPI = {
     getDeviceStorage  : getDeviceStorage,
@@ -1176,52 +1120,3 @@
 
   return publicAPI;
 }));
-
-/* =============================================================================
- * QUICK-START GUIDE
- * =============================================================================
- *
- *  1. Drop the script into any HTML page:
- *
- *       <script src="kaios-devicestorage-polyfill.js"></script>
- *
- *  2. Open the File Explorer (three ways):
- *
- *       a) URL parameter — add ?explorer to any page URL:
- *            index.html?explorer              -> opens on sdcard (internal)
- *            index.html?explorer=sdcard1      -> opens on sdcard1 (external)
- *            index.html?explorer=pictures     -> opens on pictures
- *            index.html?explorer=music        -> opens on music
- *
- *       b) Browser console:
- *            DS.openExplorer('sdcard1');
- *            (DS is the return value if you load with <script>; or require() result)
- *
- *       c) From a button in your app:
- *            <button onclick="DS.openExplorer()">Open Storage Explorer</button>
- *
- *  3. Two sdcard volumes:
- *
- *       var internal = navigator.getDeviceStorage('sdcard');    // sdcard (default)
- *       var volumes  = navigator.getDeviceStorages('sdcard');   // [sdcard, sdcard1]
- *       var external = volumes[1];                              // sdcard1
- *
- *       // No-argument form returns ALL volumes (sdcard, sdcard1, music, videos, pictures)
- *       var all = navigator.getDeviceStorages();
- *       all.forEach(function(v) {
- *         console.log(v.storageName, v.storageType, v['default']);
- *       });
- *
- *  4. Explorer features:
- *       - Volume switcher dropdown (all 5 volumes)
- *       - Directory tree with breadcrumb navigation
- *       - Live name filter
- *       - Upload via button or drag-and-drop
- *       - Create folders
- *       - Download files
- *       - Delete files and folders
- *       - Inline preview for image / video / audio / text
- *       - Used + free space in status bar
- *
- * =============================================================================
- */
