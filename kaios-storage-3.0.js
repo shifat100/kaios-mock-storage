@@ -936,6 +936,7 @@
    * Only navigator.b2g.getDeviceStorage is part of the public surface.
    */
   const b2g = Object.freeze({
+    
     /**
      * Returns (or creates) the DeviceStorage instance for `storageType`.
      *
@@ -956,6 +957,35 @@
       }
       return _storageInstances.get(storageType);
     },
+    /**
+     * Returns (or creates) the DeviceStorage instance for `storageType`.
+     */
+    getDeviceStorage(storageType) {
+      if (!STORAGE_TYPES.includes(storageType)) {
+        throw new DOMException(
+          `Unknown storage type '${storageType}'. ` +
+          `Valid types: ${STORAGE_TYPES.join(", ")}`, "UnknownError");
+      }
+      if (!_storageInstances.has(storageType)) {
+        _storageInstances.set(storageType, new DeviceStorage(storageType));
+      }
+      return _storageInstances.get(storageType);
+    },
+
+    /**
+     * Returns an array of DeviceStorage instances.
+     * For "sdcard", it returns both internal (sdcard) and external (sdcard1).
+     */
+    getDeviceStorages(storageType) {
+      if (storageType === "sdcard") {
+        return [
+          this.getDeviceStorage("sdcard"),   // Internal Storage
+          this.getDeviceStorage("sdcard1")   // External SD Card
+        ];
+      }
+      // For other types (pictures, videos, etc.), usually only one exists
+      return [this.getDeviceStorage(storageType)];
+    }
   });
 
   // ── Install polyfill ───────────────────────────────────────────────────────
