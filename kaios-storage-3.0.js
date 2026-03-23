@@ -342,17 +342,35 @@
       });
     }
 
+    // get(name) {
+    //   if (typeof name !== "string" || !name) return _rejectRequest("Invalid name", "NotFoundError");
+    //   const storageType = this._storageType;
+    //   return makeRequest(async () => {
+    //     const db = await openDatabase();
+    //     const { store } = txStore(db, storageType, "readonly");
+    //     const record = await idbPromise(store.get(name));
+    //     if (!record) throw new DOMException(`File not found: ${name}`, "NotFoundError");
+    //     return recordToFile(record, storageType);
+    //   });
+    // }
     get(name) {
-      if (typeof name !== "string" || !name) return _rejectRequest("Invalid name", "NotFoundError");
-      const storageType = this._storageType;
-      return makeRequest(async () => {
-        const db = await openDatabase();
-        const { store } = txStore(db, storageType, "readonly");
-        const record = await idbPromise(store.get(name));
-        if (!record) throw new DOMException(`File not found: ${name}`, "NotFoundError");
-        return recordToFile(record, storageType);
-      });
-    }
+  if (typeof name !== "string" || !name) return _rejectRequest("Invalid name", "NotFoundError");
+  
+  // Strip leading "/<storageType>/" prefix if present (from enumerate()'s file.name)
+  const prefix = `/${this._storageType}/`;
+  if (name.startsWith(prefix)) name = name.slice(prefix.length);
+  // Also strip a bare leading slash
+  else if (name.startsWith("/")) name = name.slice(1);
+
+  const storageType = this._storageType;
+  return makeRequest(async () => {
+    const db = await openDatabase();
+    const { store } = txStore(db, storageType, "readonly");
+    const record = await idbPromise(store.get(name));
+    if (!record) throw new DOMException(`File not found: ${name}`, "NotFoundError");
+    return recordToFile(record, storageType);
+  });
+}
 
     getEditable(name) { return this.get(name); }
 
@@ -809,3 +827,11 @@
   }
 
 }(typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : this));
+
+
+
+if (!HTMLMediaElement.prototype.fastSeek) {
+  HTMLMediaElement.prototype.fastSeek = function(time) {
+    this.currentTime = time;
+  };
+}
